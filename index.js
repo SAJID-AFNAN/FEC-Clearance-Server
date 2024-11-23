@@ -2,22 +2,17 @@
 const express = require('express')
 const app = express()
 const cors = require('cors')
-const { MongoClient, ServerApiVersion, Db } = require('mongodb');
-
-
+const { MongoClient, ServerApiVersion } = require('mongodb');
 require('dotenv').config()
 const port = 3000
-
 
 app.use(cors())
 app.use(express.json())
 
-//const uri =`mongodb://${process.env.DB_USER}:${process.env.DB_PASSWORD}@primary.7gyeb.mongodb.net/?retryWrites=true&w=majority&appName=Primary`
+// MongoDB connection string
+const uri = process.env.MDB_CONNECTION_STRING;
 
-console.log('this is the passwod from env file',process.env.DB_PASSWORD)
- const uri = process.env.MDB_CONNECTION_STRING;
-
-// Create a MongoClient with a MongoClientOptions object to set the Stable API version
+// Create a MongoClient with a MongoClientOptions object
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -26,68 +21,108 @@ const client = new MongoClient(uri, {
   }
 });
 
+let studentsCollection; // Declare this in the outer scope
+
 async function run() {
   try {
-    console.log('running the function')
+    console.log('running the function');
     await client.connect();
     const db = client.db("FEC_Clearence");
-    const studentsCollection = db.collection("students");
+    studentsCollection = db.collection("students"); // Assign the collection to the global variable
 
-    app.get("/student",async(req,res)=>{
-      console.log('into the get req of students')
-        // const email = req.query.email;
-        const resp = await studentsCollection.find({}).toArray();
-        res.send(resp);
-    })
+    // Routes using studentsCollection
+    app.get("/student", async (req, res) => {
+      console.log('into the get req of students');
+      const resp = await studentsCollection.find({}).toArray();
+      res.send(resp);
+    });
 
-    app.post("/students",async(req,res)=>{
-        const data = req.body;
-        const email = data.email;
-        const isUserExist = await studentsCollection.findOne({email: email})
-        if(isUserExist){
-          throw new Error("user already exists");
-        }
-        const resp = await studentsCollection.insertOne(data);
-        res.send(isUserExist);
-    })
+    app.post("/students", async (req, res) => {
+      const data = req.body;
+      const email = data.email;
+      const isUserExist = await studentsCollection.findOne({ email: email });
+      if (isUserExist) {
+        return res.status(400).send("User already exists");
+      }
+      const resp = await studentsCollection.insertOne(data);
+      res.send(resp);
+    });
 
-    app.get("/student",async(req,res)=>{
-      // const email = req.params.email;
-      const result = await studentsCollection.find();
-      res.send(result);
-    })
-
-    app.get("/student/:email",async(req,res)=>{
-      console.log('this is from personal detail')
+    app.get("/student/:email", async (req, res) => {
+      console.log('this is from personal detail');
       const email = req.params.email;
-      const result = await studentsCollection.findOne({email: email});
+      const result = await studentsCollection.findOne({ email: email });
       res.send(result);
-    })
+    });
+    app.get('/students/verified', async (req, res) => {
+      try {
+        const verifiedStudents = await studentsCollection.find({ verified: true }).toArray();
+        res.status(200).json(verifiedStudents);
+      } catch (error) {
+        console.error("Error fetching verified students:", error);
+        res.status(500).json({ error: "Internal server error. Please try again later." });
+      }
+    });
+    
 
-    app.put("/student/update/:email",async(req,res)=>{
+    app.put("/student/update/:email", async (req, res) => {
       const email = req.params.email;
       const data = req.body;
-      const filter = {email: email}
-      const result = await studentsCollection.updateOne(filter,{$set: data},{upsert: false});
+      const filter = { email: email };
+      const result = await studentsCollection.updateOne(filter, { $set: data }, { upsert: false });
       res.send(result);
-    })
+    });
 
-    // console.log("Pinged your deployment. You successfully connected to MongoDB!");
-  }catch (error) {
-    console.log("Error connecting to MongoDB:", error);
+    console.log("Connected to MongoDB successfully!");
+  } catch (error) {
+    console.error("Error connecting to MongoDB:", error);
   }
 }
 
-run().catch(console.dir)
+// Run the database connection function
+run().catch(console.dir);
 
+// Verification route (can now access studentsCollection)
+app.post('/student/:email/verify', async (req, res) => {
+  const { email } = req.params;
+  const { signature } = req.body;
 
+  if (!signature) {
+    return res.status(400).json({ error: "Signature is required." });
+  }
+
+  try {
+    const result = await studentsCollection.updateOne(
+      { email }, // Match the student by email
+      {
+        $set: {
+          signature,    // Update the signature field with the provided base64 string
+          verified: true // Set the verified status to true
+        }
+      }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: "Student not found." });
+    }
+
+    if (result.modifiedCount === 0) {
+      return res.status(400).json({ error: "Failed to update verification. No changes were made." });
+    }
+
+    res.json({ message: "Verification successful!" });
+  } catch (err) {
+    console.error("Error updating verification:", err);
+    res.status(500).json({ error: "Internal server error. Please try again later." });
+  }
+});
+
+// Root route
 app.get('/', (req, res) => {
-  res.send(`connected to database`)
+  res.send(`connected to database`);
+});
 
-})
-
-//nothing to say
-
+// Start the server
 app.listen(port, () => {
-  console.log(`express app listening on port ${port}`)
-})
+  console.log(`Express app listening on port ${port}`);
+});
